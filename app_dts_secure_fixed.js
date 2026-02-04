@@ -290,6 +290,7 @@ const closeAccountBtn= document.getElementById("closeAccount");
 
 const authEmailInput = document.getElementById("authEmail");
 const authPassInput  = document.getElementById("authPassword");
+const googleSignInBtn = document.getElementById("googleSignInBtn");
 const signInBtn      = document.getElementById("signInBtn");
 const signUpBtn      = document.getElementById("signUpBtn");
 const signOutBtn     = document.getElementById("signOutBtn");
@@ -1235,4 +1236,20 @@ async function initApp() {
   renderTable();
 }
 
-initApp();
+initApp();async function googleSignIn() {
+  if (!cloudEnabled()) { setAuthMsg("Please configure Cloud Settings first (Project URL + anon key).", "#b45309"); return; }
+  initSupabase();
+  if (!supa) { setAuthMsg("Supabase library not loaded. Check your internet connection.", "#b45309"); return; }
+
+  // OAuth requires an http(s) URL (not file://). Run via Live Server / hosted site.
+  const redirectTo = window.location.origin + window.location.pathname;
+
+  setAuthMsg("Redirecting to Google sign-in...", "var(--muted)");
+  const { error } = await supa.auth.signInWithOAuth({
+    provider: "google",
+    options: { redirectTo }
+  });
+  if (error) setAuthMsg(error.message || "Google sign-in failed.", "#b91c1c");
+}
+
+
