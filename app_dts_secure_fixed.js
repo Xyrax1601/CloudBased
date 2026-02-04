@@ -3,7 +3,6 @@ const STORAGE_KEY = "outgoingDocs";          // local cache
 const CLOUD_CFG_KEY = "dts_cloud_cfg";       // { url, anonKey }
 
 let DOCS = [];                // in-memory source of truth for UI
-let supa = null;              // Supabase client when enabled
 
 function uidFallback() {
   return `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -59,13 +58,34 @@ function cloudEnabled() {
 }
 
 /* ----- Supabase init ----- */
+let supaCfgSig = null;        // signature of config used to create client
+let authListenerAttached = false;
+
 function initSupabase() {
   const cfg = getCloudConfig();
-  if (!cfg || !cfg.url || !cfg.anonKey) { supa = null; return null; }
-  if (!window.supabase || !window.supabase.createClient) { supa = null; return null; }
-  supa = window.supabase.createClient(cfg.url, cfg.anonKey);
+  if (!cfg || !cfg.url || !cfg.anonKey) { supa = null; supaCfgSig = null; authListenerAttached = false; return null; }
+  if (!window.supabase || !window.supabase.createClient) { supa = null; supaCfgSig = null; authListenerAttached = false; return null; }
+
+  // Build a stable signature so we only create ONE client per config
+  const sig = `${cfg.url}::${(cfg.anonKey || "").slice(0, 12)}`;
+
+  // ✅ Return existing client if already created with same config
+  if (supa && supaCfgSig === sig) return supa;
+
+  // ✅ Create only once per config
+  supa = window.supabase.createClient(cfg.url, cfg.anonKey, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+    }
+  });
+  supaCfgSig = sig;
+  authListenerAttached = false; // reattach for new client instance
+  attachAuthListenerOnce();
   return supa;
 }
+
 /* ----- Auth helpers ----- */
 async function getCurrentUser() {
   if (!supa) return null;
@@ -101,6 +121,29 @@ async function refreshAuthUI() {
     setAuthBadge("Signed out", "warn");
   }
 }
+function attachAuthListenerOnce() {
+  if (!supa || authListenerAttached) return;
+  if (!supa.auth || !supa.auth.onAuthStateChange) return;
+
+  supa.auth.onAuthStateChange(async (event, _session) => {
+    await refreshAuthUI();
+
+    if (event === "SIGNED_IN") {
+      await loadDocs();
+      renderTable();
+    }
+
+    if (event === "SIGNED_OUT") {
+      setDocs([]);
+      renderTable();
+      try { localStorage.removeItem(STORAGE_KEY); } catch {}
+      setCloudBadge("Local", "warn");
+    }
+  });
+
+  authListenerAttached = true;
+}
+
 
 async function requireAuthOrExplain() {
   const user = await getCurrentUser();
@@ -536,6 +579,7 @@ btnTrack.addEventListener("click", () => {
 if (cloudBtn) cloudBtn.addEventListener("click", async () => {
   renderCloudConfig();
   initSupabase();
+  attachAuthListenerOnce();
   await refreshAuthUI();
   openCloud();
 });
@@ -549,6 +593,7 @@ if (disableCloudBtn) disableCloudBtn.addEventListener("click", disableCloud);
 
 if (accountBtn) accountBtn.addEventListener("click", async () => {
   initSupabase();
+  attachAuthListenerOnce();
   await refreshAuthUI();
   openAccount();
 });
@@ -1215,6 +1260,7 @@ async function initApp() {
   initTheme();
   renderCloudConfig();
   initSupabase();
+  attachAuthListenerOnce();
   await refreshAuthUI();
 
   // Default dates
