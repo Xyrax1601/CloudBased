@@ -568,9 +568,19 @@ async function signUp() {
 async function signOut() {
   if (!supa) return;
   await supa.auth.signOut();
-  setAuthMsg("Signed out. Using local storage.", "#0f766e");
+
+  // REALTIME privacy: clear the table immediately
+  setDocs([]);
+  renderTable();
+
+  // Clear any local cache so another user on same device won't see previous data
+  try { localStorage.removeItem(STORAGE_KEY); } catch {}
+
+  setAuthMsg("Signed out. Data cleared from view.", "#0f766e");
   setCloudBadge("Local", "warn");
   setAuthBadge("Signed out", "warn");
+
+  // Keep the app in local mode with empty data
   await loadDocs();
   renderTable();
 }
@@ -1063,6 +1073,7 @@ function downloadFile(filename, mime, content) {
 importCsv.addEventListener("change", async (e) => {
   const file = e.target.files?.[0];
   if (!file) return;
+
   try {
     const text = await file.text();
     const rows = parseCSV(text);
@@ -1071,6 +1082,16 @@ importCsv.addEventListener("change", async (e) => {
     const header = rows[0].map(h => (h || "").toString().trim().toLowerCase());
     const idx = (name) => header.indexOf(name);
 
+    function coalesceIndex(names) {
+      for (const n of names) {
+        const i = idx(n);
+        if (i >= 0) return i;
+      }
+      return -1;
+    }
+    function val(row, i) { return i >= 0 ? (row[i] ?? "").toString().trim() : ""; }
+
+    // Accept both old and new export formats
     const mapCol = {
       id: coalesceIndex(["id"]),
       kind: coalesceIndex(["kind","type"]),
@@ -1079,43 +1100,48 @@ importCsv.addEventListener("change", async (e) => {
       details: coalesceIndex(["details","document details","document","desc","description"]),
       receivedBy: coalesceIndex(["receivedby","received by"]),
       toOffice: coalesceIndex(["tooffice","to/office","to","office to"]),
-      date: coalesceIndex(["date","dateforwarded","date forwarded","date received"])
+      date: coalesceIndex(["date","dateforwarded","date forwarded","date received"]),
     };
 
-    function coalesceIndex(names) {
-      for (const n of names) { const i = idx(n); if (i >= 0) return i; }
-      return -1;
-    }
-    function val(row, i) { return i >= 0 ? (row[i] ?? "").toString() : ""; }
+    // Basic validation: require at least dtsNo or details to count as a record
+    const existingIds = new Set(getDocs().map(d => d.id));
+    const importedRecs = [];
 
-    const data = getDocs();
-    const existingIds = new Set(data.map(d => d.id));
-
-    let imported = 0;
     for (let r = 1; r < rows.length; r++) {
       const row = rows[r];
-      if (!row || row.every(x => (x ?? "").trim() === "")) continue;
+      if (!row || row.every(x => (x ?? "").toString().trim() === "")) continue;
 
-      let incomingId = val(row, mapCol.id) || "";
+      const dtsNo = val(row, mapCol.dtsNo);
+      const details = val(row, mapCol.details);
+      if (!dtsNo && !details) continue;
+
+      let incomingId = val(row, mapCol.id);
       if (!incomingId || existingIds.has(incomingId)) incomingId = genUniqueId(existingIds);
       existingIds.add(incomingId);
 
+      const kindRaw = (val(row, mapCol.kind) || "forward").toLowerCase();
       const rec = {
         id: incomingId,
-        kind: (val(row, mapCol.kind) || "forward").toLowerCase() === "received" ? "received" : "forward",
-        dtsNo: val(row, mapCol.dtsNo),
+        kind: kindRaw === "received" ? "received" : "forward",
+        dtsNo,
         fromOffice: val(row, mapCol.fromOffice),
-        details: val(row, mapCol.details),
+        details,
         receivedBy: val(row, mapCol.receivedBy),
         toOffice: val(row, mapCol.toOffice),
         date: val(row, mapCol.date),
       };
-      data.push(rec);
-      imported++;
+
+      // Normalize date if it's in common formats (best-effort)
+      rec.date = normalizeDate(rec.date);
+
+      importedRecs.push(rec);
     }
 
-    saveDocs(data);
-    alert(`Imported ${imported} record(s).`);
+    if (!importedRecs.length) throw new Error("No valid records found");
+
+    await bulkAddDocs(importedRecs);
+
+    alert(`Imported ${importedRecs.length} record(s).`);
     renderTable();
   } catch (err) {
     console.error(err);
@@ -1125,7 +1151,7 @@ importCsv.addEventListener("change", async (e) => {
   }
 });
 
-/* CSV parser */
+/* CSV parser *//* CSV parser */
 function parseCSV(text) {
   const rows = [];
   let row = [];
@@ -1156,6 +1182,67 @@ function parseCSV(text) {
   }
   if (cur.length > 0 || row.length > 0) { row.push(cur); rows.push(row); }
   return rows;
+}
+
+function normalizeDate(s) {
+  const t = (s || "").trim();
+  if (!t) return "";
+  // If already YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+
+  // Try MM/DD/YYYY or M/D/YYYY
+  const mdy = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (mdy) {
+    const mm = mdy[1].padStart(2, "0");
+    const dd = mdy[2].padStart(2, "0");
+    return `${mdy[3]}-${mm}-${dd}`;
+  }
+
+  // Try DD/MM/YYYY (if clearly day>12)
+  const dmy = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (dmy) {
+    const a = parseInt(dmy[1], 10), b = parseInt(dmy[2], 10);
+    if (a > 12) {
+      const dd = dmy[1].padStart(2, "0");
+      const mm = dmy[2].padStart(2, "0");
+      return `${dmy[3]}-${mm}-${dd}`;
+    }
+  }
+
+  return t; // leave as-is if unknown format
+}
+
+async function bulkAddDocs(recs) {
+  if (!Array.isArray(recs) || !recs.length) return;
+
+  // Update local/in-memory first
+  const existing = getDocs();
+  const existingIds = new Set(existing.map(d => d.id));
+  const toAdd = [];
+
+  for (const r of recs) {
+    const safe = { ...r };
+    if (!safe.id || existingIds.has(safe.id)) safe.id = uid();
+    existingIds.add(safe.id);
+    toAdd.push(safe);
+  }
+
+  // Prepend so newest imported appear at top
+  DOCS = [...toAdd.reverse(), ...existing];
+  saveLocalDocs(DOCS);
+
+  // If secure cloud is enabled AND user is signed in, bulk insert
+  if (cloudEnabled() && supa) {
+    const user = await getCurrentUser();
+    if (!user) return;
+
+    // Attach user_id on every row
+    const payload = toAdd.map(d => docToRow({ ...d, userId: user.id }));
+    const { error } = await supa.from("documents").insert(payload);
+    if (error) {
+      console.warn("Cloud bulk insert failed; kept in local cache.", error);
+    }
+  }
 }
 
 /* ========= Utilities ========= */
