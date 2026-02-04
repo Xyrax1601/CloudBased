@@ -217,5 +217,3 @@ tr:hover { background: var(--hover); }
   line-height: 1.35;
 }
 
-/* Google sign-in button spacing */
-#googleSignInBtn { flex: 1; }
