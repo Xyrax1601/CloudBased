@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Outgoing Documents Tracker</title>
-  <link rel="stylesheet" href="style_secure.css"/>
+  <link rel="stylesheet" href="style_secure_fixed.css"/>
 </head>
 <body>
   <div class="app">
@@ -199,13 +199,39 @@
         </div>
 
         <div id="cloudMsg" class="msg"></div>
+        <p class="muted">For sign-in / sign-out, use the <strong>Account</strong> button.</p>
+<details class="cloud-help">
+          <summary>Required database table</summary>
+          <pre class="codebox">Table name: documents
+Columns:
+- id (uuid, primary key)
+- kind (text)              -- "forward" or "received"
+- dts_no (text)
+- from_office (text)
+- details (text)
+- received_by (text)
+- to_office (text)
+- doc_date (date)
+- user_id (uuid, not null)
+- created_at (timestamptz, default now())</pre>
+        </details>
+      </div>
+    </div>
+  </div>
 
-        
-        <hr class="divider">
 
-        <h4 class="section-title">Sign in (required for secure cloud)</h4>
+  
+  <!-- Account Modal -->
+  <div id="accountModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="accountTitle">
+    <div class="modal-backdrop"></div>
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="accountTitle">Account</h3>
+        <button id="closeAccount" class="icon-btn" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
         <p class="muted">
-          Security uses Supabase Auth + Row Level Security so each user only sees their own records.
+          Sign in is required for secure cloud sync (Supabase Auth + Row Level Security).
         </p>
 
         <div class="cloud-grid">
@@ -226,19 +252,12 @@
         <div id="authMsg" class="msg"></div>
 
         <details class="cloud-help">
-          <summary>Required database table</summary>
-          <pre class="codebox">Table name: documents
-Columns:
-- id (uuid, primary key)
-- kind (text)              -- "forward" or "received"
-- dts_no (text)
-- from_office (text)
-- details (text)
-- received_by (text)
-- to_office (text)
-- doc_date (date)
-- user_id (uuid, not null)
-- created_at (timestamptz, default now())</pre>
+          <summary>Security notes</summary>
+          <pre class="codebox">This app uses:
+- Supabase Auth (email + password)
+- Row Level Security (RLS) on table: documents
+Policy: user_id = auth.uid()
+So each user can only see/edit/delete their own rows.</pre>
         </details>
       </div>
     </div>
