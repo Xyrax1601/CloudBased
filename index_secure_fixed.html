@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Outgoing Documents Tracker</title>
+  <link rel="stylesheet" href="style_secure.css"/>
+</head>
+<body>
+  <div class="app">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <h1>DTS Outgoing</h1>
+      <p class="desc">Record & track documents</p>
+            <div class="theme-row">
+        <button id="themeToggle" class="btn-ghost theme-btn" type="button">Dark Mode</button>
+      </div>
+
+      <div class="cloud-row">
+        <button id="cloudBtn" class="btn-ghost cloud-btn" type="button">Cloud Settings</button>
+        <span id="cloudBadge" class="badge" title="Cloud status">Local</span>
+      </div>
+
+      <div class="account-row">
+        <button id="accountBtn" class="btn-ghost cloud-btn" type="button">Account</button>
+        <span id="authBadge" class="badge warn" title="Authentication status">Signed out</span>
+      </div>
+<button class="nav-btn" id="btnForward">Forward Document</button>
+      <button class="nav-btn" id="btnReceive">Receive Document</button>
+      <button class="nav-btn" id="btnTrack">Track Document</button>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="content">
+      <!-- Forward Form -->
+      <section id="forwardSection" class="section hidden">
+        <h2>Forward Document</h2>
+        <form id="forwardForm" novalidate>
+          <label>DTS Tracking No.<input type="text" id="dtsNo"></label>
+          <label>From/Office<input type="text" id="fromOffice"></label>
+          <label>Document Details<textarea id="details"></textarea></label>
+          <label>Received By<input type="text" id="receivedBy"></label>
+          <label>To/Office<input type="text" id="toOffice"></label>
+          <label>Date Forwarded<input type="date" id="dateForwarded"></label>
+          <div class="form-actions">
+            <button type="submit" class="btn-primary">Save Record</button>
+            <button type="reset" class="btn-ghost">Reset</button>
+          </div>
+        </form>
+        <div id="formMsg" class="msg"></div>
+      </section>
+
+      <!-- Receive Form (no DTS per request) -->
+      <section id="receiveSection" class="section hidden">
+        <h2>Receive Document</h2>
+        <form id="receiveForm" novalidate>
+          <label>From/Office<input type="text" id="rxFromOffice"></label>
+          <label>Document Details<textarea id="rxDetails"></textarea></label>
+          <label>Received By<input type="text" id="rxReceivedBy"></label>
+          <label>Date Received<input type="date" id="rxDate"></label>
+          <div class="form-actions">
+            <button type="submit" class="btn-primary">Save Received</button>
+            <button type="reset" class="btn-ghost">Reset</button>
+          </div>
+        </form>
+        <div id="receiveMsg" class="msg"></div>
+      </section>
+
+      <!-- Track/Search -->
+      <section id="trackSection" class="section hidden">
+        <h2>Track Document</h2>
+
+        <div class="filters">
+          <input type="text" id="searchAll" placeholder="Search all fields (DTS, From, Details, Received By, To, Date)">
+          <input type="date" id="filterDate" title="Filter by date">
+
+          <button id="clearFilters" class="btn-ghost">Clear</button>
+          <button id="toggleView" class="btn-ghost">View Received Documents</button>
+
+          <!-- Action buttons (open popups) -->
+          <button id="printBtn" class="btn-primary">Print</button>
+          <button id="exportBtn" class="btn-ghost">Export</button>
+
+          <label class="btn-ghost file-label">
+            Import CSV
+            <input type="file" id="importCsv" accept=".csv" hidden>
+          </label>
+
+          <!-- Bulk delete -->
+          <button id="deleteSelected" class="btn-danger no-print" disabled>Delete Selected</button>
+        </div>
+
+        <div class="table-container">
+          <table id="resultsTable">
+            <thead>
+              <tr>
+                <th class="no-print select-col">
+                  <input type="checkbox" id="selectAll" aria-label="Select all rows">
+                </th>
+                <th>DTS Tracking No.</th>
+                <th>From/Office</th>
+                <th>Document Details</th>
+                <th>Received By</th>
+                <th id="thToOffice">To/Office</th>
+                <th id="thDate">Date Forwarded</th>
+                <th class="no-print">Actions</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Edit Modal -->
+  <div id="editModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="editTitle">
+    <div class="modal-backdrop"></div>
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="editTitle">Edit Document</h3>
+        <button id="closeEdit" class="icon-btn" aria-label="Close">&times;</button>
+      </div>
+      <form id="editForm" class="modal-body" novalidate>
+        <input type="hidden" id="editId" />
+        <input type="hidden" id="editKind" />
+        <label>DTS Tracking No.<input type="text" id="editDtsNo"></label>
+        <label>From/Office<input type="text" id="editFromOffice"></label>
+        <label>Document Details<textarea id="editDetails"></textarea></label>
+        <label>Received By<input type="text" id="editReceivedBy"></label>
+        <label id="labelToOffice">To/Office<input type="text" id="editToOffice"></label>
+        <label id="labelDate">Date<input type="date" id="editDate"></label>
+        <div class="form-actions">
+          <button type="button" class="btn-ghost" id="cancelEdit">Cancel</button>
+          <button type="submit" class="btn-primary">Save Changes</button>
+        </div>
+        <div id="editMsg" class="msg"></div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Print Options Modal -->
+  <div id="printModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="printTitle">
+    <div class="modal-backdrop"></div>
+    <div class="modal-card modal-sm">
+      <div class="modal-header">
+        <h3 id="printTitle">Print Options</h3>
+        <button id="closePrint" class="icon-btn" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <button id="printSelection" class="btn-primary full">Print Selection</button>
+        <button id="printAll" class="btn-ghost full">Print All (Filtered)</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Export Options Modal -->
+  <div id="exportModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="exportTitle">
+    <div class="modal-backdrop"></div>
+    <div class="modal-card modal-sm">
+      <div class="modal-header">
+        <h3 id="exportTitle">Export Options</h3>
+        <button id="closeExport" class="icon-btn" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body grid-2">
+        <button data-fmt="csv" class="btn-primary">CSV</button>
+        <button data-fmt="excel" class="btn-primary">Excel</button>
+        <button data-fmt="word" class="btn-primary">Word</button>
+        <button data-fmt="pdf" class="btn-primary">PDF</button>
+      </div>
+    </div>
+  </div>
+  <!-- Cloud Settings Modal -->
+  <div id="cloudModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="cloudTitle">
+    <div class="modal-backdrop"></div>
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="cloudTitle">Cloud Database Settings</h3>
+        <button id="closeCloud" class="icon-btn" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="muted">
+          This system can sync to a Supabase (Postgres) cloud database. Paste your Project URL and anon key below.
+        </p>
+
+        <div class="cloud-grid">
+          <label>Supabase Project URL
+            <input id="cloudUrl" type="text" placeholder="https://xxxx.supabase.co">
+          </label>
+          <label>Supabase anon public key
+            <textarea id="cloudKey" rows="3" placeholder="eyJhbGciOi..."></textarea>
+          </label>
+        </div>
+
+        <div class="cloud-actions">
+          <button id="testCloud" class="btn-ghost" type="button">Test Connection</button>
+          <button id="saveCloud" class="btn-primary" type="button">Save</button>
+          <button id="disableCloud" class="btn-ghost danger" type="button">Disable Cloud</button>
+        </div>
+
+        <div id="cloudMsg" class="msg"></div>
+
+        
+        <hr class="divider">
+
+        <h4 class="section-title">Sign in (required for secure cloud)</h4>
+        <p class="muted">
+          Security uses Supabase Auth + Row Level Security so each user only sees their own records.
+        </p>
+
+        <div class="cloud-grid">
+          <label>Email
+            <input id="authEmail" type="email" placeholder="name@example.com" autocomplete="email">
+          </label>
+          <label>Password
+            <input id="authPassword" type="password" placeholder="••••••••" autocomplete="current-password">
+          </label>
+        </div>
+
+        <div class="cloud-actions">
+          <button id="signInBtn" class="btn-primary" type="button">Sign in</button>
+          <button id="signUpBtn" class="btn-ghost" type="button">Create account</button>
+          <button id="signOutBtn" class="btn-ghost danger" type="button">Sign out</button>
+        </div>
+
+        <div id="authMsg" class="msg"></div>
+
+        <details class="cloud-help">
+          <summary>Required database table</summary>
+          <pre class="codebox">Table name: documents
+Columns:
+- id (uuid, primary key)
+- kind (text)              -- "forward" or "received"
+- dts_no (text)
+- from_office (text)
+- details (text)
+- received_by (text)
+- to_office (text)
+- doc_date (date)
+- user_id (uuid, not null)
+- created_at (timestamptz, default now())</pre>
+        </details>
+      </div>
+    </div>
+  </div>
+
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="app_dts_secure_fixed.js"></script>
+</body>
+</html>
