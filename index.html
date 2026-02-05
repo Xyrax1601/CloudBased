@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Outgoing Documents Tracker</title>
-  <link rel="stylesheet" href="style_secure.css"/>
+  <link rel="stylesheet" href="style_theme.css"/>
 </head>
 <body>
   <div class="app">
@@ -199,8 +199,33 @@
         </div>
 
         <div id="cloudMsg" class="msg"></div>
-        <p class="muted">For sign-in / sign-out, use the <strong>Account</strong> button.</p>
-<details class="cloud-help">
+
+        
+        <hr class="divider">
+
+        <h4 class="section-title">Sign in (required for secure cloud)</h4>
+        <p class="muted">
+          Security uses Supabase Auth + Row Level Security so each user only sees their own records.
+        </p>
+
+        <div class="cloud-grid">
+          <label>Email
+            <input id="authEmail" type="email" placeholder="name@example.com" autocomplete="email">
+          </label>
+          <label>Password
+            <input id="authPassword" type="password" placeholder="••••••••" autocomplete="current-password">
+          </label>
+        </div>
+
+        <div class="cloud-actions">
+          <button id="signInBtn" class="btn-primary" type="button">Sign in</button>
+          <button id="signUpBtn" class="btn-ghost" type="button">Create account</button>
+          <button id="signOutBtn" class="btn-ghost danger" type="button">Sign out</button>
+        </div>
+
+        <div id="authMsg" class="msg"></div>
+
+        <details class="cloud-help">
           <summary>Required database table</summary>
           <pre class="codebox">Table name: documents
 Columns:
@@ -220,50 +245,7 @@ Columns:
   </div>
 
 
-  
-  <!-- Account Modal -->
-  <div id="accountModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="accountTitle">
-    <div class="modal-backdrop"></div>
-    <div class="modal-card">
-      <div class="modal-header">
-        <h3 id="accountTitle">Account</h3>
-        <button id="closeAccount" class="icon-btn" aria-label="Close">&times;</button>
-      </div>
-      <div class="modal-body">
-        <p class="muted">
-          Sign in is required for secure cloud sync (Supabase Auth + Row Level Security).
-        </p>
-
-        <div class="cloud-grid">
-          <label>Email
-            <input id="authEmail" type="email" placeholder="name@example.com" autocomplete="email">
-          </label>
-          <label>Password
-            <input id="authPassword" type="password" placeholder="••••••••" autocomplete="current-password">
-          </label>
-        </div>
-
-        <div class="cloud-actions"><button id="signInBtn" class="btn-primary" type="button">Sign in</button>
-          <button id="signUpBtn" class="btn-ghost" type="button">Create account</button>
-          <button id="signOutBtn" class="btn-ghost danger" type="button">Sign out</button>
-        </div>
-
-        <div id="authMsg" class="msg"></div>
-
-        <details class="cloud-help">
-          <summary>Security notes</summary>
-          <pre class="codebox">This app uses:
-- Supabase Auth (email + password)
-- Row Level Security (RLS) on table: documents
-Policy: user_id = auth.uid()
-So each user can only see/edit/delete their own rows.</pre>
-        </details>
-      </div>
-    </div>
-  </div>
-
-
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="app_dts_secure_fixed.js"></script>
+  <script src="app_dts_cloud.js"></script>
 </body>
 </html>
