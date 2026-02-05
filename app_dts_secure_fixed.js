@@ -58,30 +58,62 @@ function cloudEnabled() {
 }
 
 /* ----- Supabase init ----- */
+let supa = null;              // Supabase client when enabled (singleton)
 let supaCfgSig = null;        // signature of config used to create client
 let authListenerAttached = false;
 
+function computeStorageKey(url) {
+  try {
+    const u = new URL(url);
+    // project ref is the first subdomain: <ref>.supabase.co
+    const host = u.hostname || "";
+    const ref = host.split(".")[0] || "default";
+    return `dts_auth_${ref}`;
+  } catch {
+    return "dts_auth_default";
+  }
+}
+
 function initSupabase() {
   const cfg = getCloudConfig();
-  if (!cfg || !cfg.url || !cfg.anonKey) { supa = null; supaCfgSig = null; authListenerAttached = false; return null; }
-  if (!window.supabase || !window.supabase.createClient) { supa = null; supaCfgSig = null; authListenerAttached = false; return null; }
 
-  // Build a stable signature so we only create ONE client per config
+  if (!cfg || !cfg.url || !cfg.anonKey) {
+    supa = null; supaCfgSig = null; authListenerAttached = false;
+    return null;
+  }
+  if (!window.supabase || !window.supabase.createClient) {
+    supa = null; supaCfgSig = null; authListenerAttached = false;
+    return null;
+  }
+
   const sig = `${cfg.url}::${(cfg.anonKey || "").slice(0, 12)}`;
 
-  // ✅ Return existing client if already created with same config
-  if (supa && supaCfgSig === sig) return supa;
+  // ✅ Prefer a global singleton so we never create multiple clients in the same page
+  const globalKey = "__DTS_SUPABASE_SINGLETON__";
+  const existing = window[globalKey];
 
-  // ✅ Create only once per config
+  if (existing && existing.client && existing.sig === sig) {
+    supa = existing.client;
+    supaCfgSig = sig;
+    attachAuthListenerOnce();
+    return supa;
+  }
+
+  // Create a client (one per config) with a dedicated storageKey to avoid collisions
+  const storageKey = computeStorageKey(cfg.url);
+
   supa = window.supabase.createClient(cfg.url, cfg.anonKey, {
     auth: {
       persistSession: true,
       autoRefreshToken: true,
       detectSessionInUrl: true,
+      storageKey,
     }
   });
+
+  window[globalKey] = { client: supa, sig };
   supaCfgSig = sig;
-  authListenerAttached = false; // reattach for new client instance
+  authListenerAttached = false;
   attachAuthListenerOnce();
   return supa;
 }
