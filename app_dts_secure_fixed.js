@@ -14,7 +14,19 @@ function uid() {
 }
 
 /* ----- Local cache ----- */
-function saveLocalDocs(docs) { localStorage.setItem(STORAGE_KEY, JSON.stringify(docs)); }
+function saveLocalDocs(docs) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(docs));
+  } catch (e) {
+    console.error("Local save failed (storage blocked or quota exceeded).", e);
+    try {
+      if (cloudMsg) {
+        cloudMsg.textContent = "Warning: Browser storage is blocked or full. Your records may not be saved locally.";
+        cloudMsg.style.color = "#b91c1c";
+      }
+    } catch (_) {}
+  }
+}
 function getLocalDocsRaw() { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; }
 
 /* Ensure id/kind/date fields exist for older data */
@@ -63,7 +75,23 @@ function initSupabase() {
   const cfg = getCloudConfig();
   if (!cfg || !cfg.url || !cfg.anonKey) { supa = null; return null; }
   if (!window.supabase || !window.supabase.createClient) { supa = null; return null; }
-  supa = window.supabase.createClient(cfg.url, cfg.anonKey);
+
+  const sig = `${cfg.url}::${(cfg.anonKey || "").slice(0, 12)}`;
+  const globalKey = "__DTS_SUPABASE_SINGLETON__";
+  const existing = window[globalKey];
+
+  if (existing && existing.client && existing.sig === sig) {
+    supa = existing.client;
+    attachAuthListenerOnce();
+    return supa;
+  }
+
+  supa = window.supabase.createClient(cfg.url, cfg.anonKey, {
+    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
+  });
+
+  window[globalKey] = { client: supa, sig };
+  attachAuthListenerOnce();
   return supa;
 }
 /* ----- Auth helpers ----- */
@@ -101,6 +129,27 @@ async function refreshAuthUI() {
     setAuthBadge("Signed out", "warn");
   }
 }
+let __authListenerAttached = false;
+function attachAuthListenerOnce() {
+  if (!supa || __authListenerAttached) return;
+  if (!supa.auth || !supa.auth.onAuthStateChange) return;
+
+  supa.auth.onAuthStateChange(async (event, _session) => {
+    await refreshAuthUI();
+
+    if (event === "SIGNED_IN") {
+      try { await loadDocs(); renderTable(); } catch (_) {}
+    }
+
+    // Don't wipe local cache on transient SIGNED_OUT events
+    if (event === "SIGNED_OUT") {
+      setCloudBadge("Local", "warn");
+    }
+  });
+
+  __authListenerAttached = true;
+}
+
 
 async function requireAuthOrExplain() {
   const user = await getCurrentUser();
@@ -189,8 +238,20 @@ async function loadDocs() {
     const user = await requireAuthOrExplain();
     if (user) {
       try {
-        const cloudDocs = await cloudFetchAll();
-        setDocs(cloudDocs);
+const cloudDocs = await cloudFetchAll();
+
+const localNow = getLocalDocs();
+if (cloudDocs.length === 0 && localNow.length > 0) {
+  console.warn("Cloud returned 0 rows. Keeping local cache (check RLS/user_id).");
+  setDocs(localNow);
+  if (cloudMsg) {
+    cloudMsg.textContent = "Cloud returned 0 rows for this user. Keeping local cache. Check RLS and ensure documents.user_id matches your auth user id.";
+    cloudMsg.style.color = "#b45309";
+  }
+  setCloudBadge("Cloud", "warn");
+} else {
+  setDocs(cloudDocs);
+}
         if (cloudMsg) {
           cloudMsg.textContent = "Secure cloud connected. Data is scoped per signed-in user.";
           cloudMsg.style.color = "#0f766e";
@@ -212,6 +273,7 @@ async function loadDocs() {
 }
 
 async function addDoc(doc) {
+  initSupabase();
   const safe = { ...doc, id: doc.id || uid() };
   // update in memory first for responsiveness
   DOCS.unshift(safe);
@@ -231,6 +293,7 @@ async function addDoc(doc) {
 }
 
 async function updateDoc(updated) {
+  initSupabase();
   DOCS = DOCS.map(d => (d.id === updated.id ? updated : d));
   saveLocalDocs(DOCS);
 
@@ -248,6 +311,7 @@ async function updateDoc(updated) {
 }
 
 async function deleteManyById(ids) {
+  initSupabase();
   const idset = new Set(ids);
   DOCS = DOCS.filter(d => !idset.has(d.id));
   saveLocalDocs(DOCS);
@@ -580,21 +644,11 @@ async function signOut() {
   setCloudBadge("Local", "warn");
   setAuthBadge("Signed out", "warn");
 
-  // Keep the app in local mode with empty data
-  await loadDocs();
-  renderTable();
-}
+  }
 
 if (signInBtn) signInBtn.addEventListener("click", signIn);
 if (signUpBtn) signUpBtn.addEventListener("click", signUp);
 if (signOutBtn) signOutBtn.addEventListener("click", signOut);
-
-// Keep UI in sync on auth state changes
-if (supa && supa.auth && supa.auth.onAuthStateChange) {
-  supa.auth.onAuthStateChange(async (_event, _session) => {
-    await refreshAuthUI();
-  });
-}
 
 // Account button opens the same modal (auth is inside Cloud Settings)
 if (accountBtn) accountBtn.addEventListener("click", () => { renderCloudConfig(); openCloud(); });
@@ -1213,6 +1267,7 @@ function normalizeDate(s) {
 }
 
 async function bulkAddDocs(recs) {
+  initSupabase();
   if (!Array.isArray(recs) || !recs.length) return;
 
   // Update local/in-memory first
