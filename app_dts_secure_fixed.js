@@ -3,7 +3,6 @@ const STORAGE_KEY = "outgoingDocs";          // local cache
 const CLOUD_CFG_KEY = "dts_cloud_cfg";       // { url, anonKey }
 
 let DOCS = [];                // in-memory source of truth for UI
-let supa = null;              // Supabase client when enabled
 
 function uidFallback() {
   return `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -59,13 +58,34 @@ function cloudEnabled() {
 }
 
 /* ----- Supabase init ----- */
+let supaCfgSig = null;        // signature of config used to create client
+let authListenerAttached = false;
+
 function initSupabase() {
   const cfg = getCloudConfig();
-  if (!cfg || !cfg.url || !cfg.anonKey) { supa = null; return null; }
-  if (!window.supabase || !window.supabase.createClient) { supa = null; return null; }
-  supa = window.supabase.createClient(cfg.url, cfg.anonKey);
+  if (!cfg || !cfg.url || !cfg.anonKey) { supa = null; supaCfgSig = null; authListenerAttached = false; return null; }
+  if (!window.supabase || !window.supabase.createClient) { supa = null; supaCfgSig = null; authListenerAttached = false; return null; }
+
+  // Build a stable signature so we only create ONE client per config
+  const sig = `${cfg.url}::${(cfg.anonKey || "").slice(0, 12)}`;
+
+  // ✅ Return existing client if already created with same config
+  if (supa && supaCfgSig === sig) return supa;
+
+  // ✅ Create only once per config
+  supa = window.supabase.createClient(cfg.url, cfg.anonKey, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+    }
+  });
+  supaCfgSig = sig;
+  authListenerAttached = false; // reattach for new client instance
+  attachAuthListenerOnce();
   return supa;
 }
+
 /* ----- Auth helpers ----- */
 async function getCurrentUser() {
   if (!supa) return null;
@@ -101,6 +121,30 @@ async function refreshAuthUI() {
     setAuthBadge("Signed out", "warn");
   }
 }
+function attachAuthListenerOnce() {
+  if (!supa || authListenerAttached) return;
+  if (!supa.auth || !supa.auth.onAuthStateChange) return;
+
+  supa.auth.onAuthStateChange(async (event, _session) => {
+    await refreshAuthUI();
+
+    if (event === "SIGNED_IN") {
+      await loadDocs();
+      renderTable();
+    }
+
+    if (event === "SIGNED_OUT") {
+      setDocs([]);
+      renderTable();
+      // keep local cache; clear only on explicit Sign out
+          
+      setCloudBadge("Local", "warn");
+    }
+  });
+
+  authListenerAttached = true;
+}
+
 
 async function requireAuthOrExplain() {
   const user = await getCurrentUser();
@@ -282,8 +326,12 @@ const testCloudBtn   = document.getElementById("testCloud");
 const saveCloudBtn   = document.getElementById("saveCloud");
 const disableCloudBtn= document.getElementById("disableCloud");
 const cloudMsg       = document.getElementById("cloudMsg");
+
 const accountBtn     = document.getElementById("accountBtn");
 const authBadge      = document.getElementById("authBadge");
+const accountModal   = document.getElementById("accountModal");
+const closeAccountBtn= document.getElementById("closeAccount");
+
 const authEmailInput = document.getElementById("authEmail");
 const authPassInput  = document.getElementById("authPassword");
 const signInBtn      = document.getElementById("signInBtn");
@@ -386,6 +434,9 @@ function setCloudBadge(state, cls) {
 }
 function openCloud() { if (cloudModal) cloudModal.classList.remove("hidden"); }
 function closeCloud() { if (cloudModal) cloudModal.classList.add("hidden"); if (cloudMsg) cloudMsg.textContent = ""; }
+
+function openAccount() { if (accountModal) accountModal.classList.remove("hidden"); }
+function closeAccount() { if (accountModal) accountModal.classList.add("hidden"); setAuthMsg(""); }
 
 function renderCloudConfig() {
   const cfg = getCloudConfig() || { url: "", anonKey: "" };
@@ -525,8 +576,14 @@ btnTrack.addEventListener("click", () => {
   trackSection.classList.remove("hidden");
   setView("forward");
 });
-/* Cloud modal wiring */
-if (cloudBtn) cloudBtn.addEventListener("click", () => { renderCloudConfig(); openCloud(); });
+/* Cloud & Account modal wiring */
+if (cloudBtn) cloudBtn.addEventListener("click", async () => {
+  renderCloudConfig();
+  initSupabase();
+  attachAuthListenerOnce();
+  await refreshAuthUI();
+  openCloud();
+});
 if (closeCloudBtn) closeCloudBtn.addEventListener("click", closeCloud);
 if (cloudModal) cloudModal.addEventListener("click", (e) => {
   if (e.target && e.target.classList && e.target.classList.contains("modal-backdrop")) closeCloud();
@@ -535,69 +592,16 @@ if (testCloudBtn) testCloudBtn.addEventListener("click", testCloudConnection);
 if (saveCloudBtn) saveCloudBtn.addEventListener("click", saveCloudSettings);
 if (disableCloudBtn) disableCloudBtn.addEventListener("click", disableCloud);
 
-/* Auth actions */
-async function signIn() {
-  if (!supa) { setAuthMsg("Configure cloud first (Project URL + anon key).", "#b45309"); return; }
-  const email = (authEmailInput?.value || "").trim();
-  const password = (authPassInput?.value || "").trim();
-  if (!email || !password) { setAuthMsg("Email and password are required.", "#b45309"); return; }
-
-  setAuthMsg("Signing in...", "var(--muted)");
-  const { error } = await supa.auth.signInWithPassword({ email, password });
-  if (error) { setAuthMsg(error.message || "Sign in failed.", "#b91c1c"); return; }
-
-  setAuthMsg("Signed in successfully. Loading your records...", "#0f766e");
-  await loadDocs();
-  renderTable();
-}
-
-async function signUp() {
-  if (!supa) { setAuthMsg("Configure cloud first (Project URL + anon key).", "#b45309"); return; }
-  const email = (authEmailInput?.value || "").trim();
-  const password = (authPassInput?.value || "").trim();
-  if (!email || !password) { setAuthMsg("Email and password are required.", "#b45309"); return; }
-
-  setAuthMsg("Creating account...", "var(--muted)");
-  const { error } = await supa.auth.signUp({ email, password });
-  if (error) { setAuthMsg(error.message || "Sign up failed.", "#b91c1c"); return; }
-
-  setAuthMsg("Account created. If email confirmation is enabled, check your inbox. Then sign in.", "#0f766e");
+if (accountBtn) accountBtn.addEventListener("click", async () => {
+  initSupabase();
+  attachAuthListenerOnce();
   await refreshAuthUI();
-}
-
-async function signOut() {
-  if (!supa) return;
-  await supa.auth.signOut();
-
-  // REALTIME privacy: clear the table immediately
-  setDocs([]);
-  renderTable();
-
-  // Clear any local cache so another user on same device won't see previous data
-  try { localStorage.removeItem(STORAGE_KEY); } catch {}
-
-  setAuthMsg("Signed out. Data cleared from view.", "#0f766e");
-  setCloudBadge("Local", "warn");
-  setAuthBadge("Signed out", "warn");
-
-  // Keep the app in local mode with empty data
-  await loadDocs();
-  renderTable();
-}
-
-if (signInBtn) signInBtn.addEventListener("click", signIn);
-if (signUpBtn) signUpBtn.addEventListener("click", signUp);
-if (signOutBtn) signOutBtn.addEventListener("click", signOut);
-
-// Keep UI in sync on auth state changes
-if (supa && supa.auth && supa.auth.onAuthStateChange) {
-  supa.auth.onAuthStateChange(async (_event, _session) => {
-    await refreshAuthUI();
-  });
-}
-
-// Account button opens the same modal (auth is inside Cloud Settings)
-if (accountBtn) accountBtn.addEventListener("click", () => { renderCloudConfig(); openCloud(); });
+  openAccount();
+});
+if (closeAccountBtn) closeAccountBtn.addEventListener("click", closeAccount);
+if (accountModal) accountModal.addEventListener("click", (e) => {
+  if (e.target && e.target.classList && e.target.classList.contains("modal-backdrop")) closeAccount();
+});
 
 
 /* Toggle view within Track */
@@ -1256,6 +1260,9 @@ btnForward.click();
 async function initApp() {
   initTheme();
   renderCloudConfig();
+  initSupabase();
+  attachAuthListenerOnce();
+  await refreshAuthUI();
 
   // Default dates
   const today = new Date().toISOString().slice(0, 10);
